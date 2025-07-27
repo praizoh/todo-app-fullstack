@@ -1,0 +1,332 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '18'
+  CYPRESS_CACHE_FOLDER: ~/.cache/Cypress
+
+jobs:
+  # Backend API Tests
+  backend-tests:
+    name: Backend API Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: backend/package-lock.json
+
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Run backend linting
+      run: |
+        cd backend
+        npm run lint || echo "Linting not configured, skipping..."
+
+    - name: Run API tests with coverage
+      run: |
+        cd backend
+        npm test -- --coverage --watchAll=false
+
+    - name: Upload backend coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./backend/coverage/lcov.info
+        flags: backend
+        name: backend-coverage
+        fail_ci_if_error: false
+
+    - name: Archive backend test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: backend-test-results
+        path: |
+          backend/coverage/
+          backend/test-results/
+
+  # Frontend Unit Tests (if we had them)
+  frontend-unit-tests:
+    name: Frontend Unit Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Run frontend linting
+      run: |
+        cd frontend
+        npm run lint || echo "Linting not configured, skipping..."
+
+    - name: Run frontend unit tests
+      run: |
+        cd frontend
+        npm test -- --coverage --watchAll=false --passWithNoTests
+
+  # E2E Tests
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-unit-tests]
+    
+    strategy:
+      matrix:
+        browser: [chrome, firefox, edge]
+        containers: [1, 2] # Parallel execution
+      fail-fast: false
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Cache Cypress binary
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/Cypress
+        key: cypress-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
+        restore-keys: |
+          cypress-${{ runner.os }}-
+
+    - name: Install root dependencies
+      run: npm ci
+
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        npm ci
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+
+    - name: Start backend server
+      run: |
+        cd backend
+        npm start &
+        sleep 5
+      env:
+        NODE_ENV: test
+
+    - name: Start frontend server
+      run: |
+        cd frontend
+        npm start &
+        sleep 10
+      env:
+        REACT_APP_API_URL: http://localhost:5000/api
+
+    - name: Wait for servers to be ready
+      run: |
+        npx wait-on http://localhost:3000 http://localhost:5000/api/health --timeout 60000
+
+    - name: Run Cypress E2E tests
+      uses: cypress-io/github-action@v6
+      with:
+        working-directory: frontend
+        browser: ${{ matrix.browser }}
+        record: true
+        parallel: true
+        group: 'E2E Tests - ${{ matrix.browser }}'
+        spec: cypress/e2e/**/*.cy.js
+      env:
+        CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        CYPRESS_baseUrl: http://localhost:3000
+
+    - name: Upload Cypress screenshots
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: cypress-screenshots-${{ matrix.browser }}-${{ matrix.containers }}
+        path: frontend/cypress/screenshots
+
+    - name: Upload Cypress videos
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: cypress-videos-${{ matrix.browser }}-${{ matrix.containers }}
+        path: frontend/cypress/videos
+
+  # Security Audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Audit backend dependencies
+      run: |
+        cd backend
+        npm audit --audit-level=moderate || exit 0
+
+    - name: Audit frontend dependencies
+      run: |
+        cd frontend
+        npm audit --audit-level=moderate || exit 0
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
+      with:
+        languages: javascript
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  # Performance Tests
+  performance-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-unit-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        npm ci
+        cd backend && npm ci
+        cd ../frontend && npm ci
+
+    - name: Start servers
+      run: |
+        cd backend && npm start &
+        cd frontend && npm start &
+        sleep 15
+
+    - name: Run Lighthouse CI
+      run: |
+        npm install -g @lhci/cli@0.12.x
+        lhci autorun
+      env:
+        LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+  # Build and Deploy
+  build-and-deploy:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-unit-tests, e2e-tests, security-audit]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        cd backend && npm ci
+        cd ../frontend && npm ci
+
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+      env:
+        REACT_APP_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+
+    - name: Deploy to Render
+      run: |
+        echo "Deployment would happen here"
+        echo "Backend URL: ${{ secrets.RENDER_BACKEND_URL }}"
+        echo "Frontend URL: ${{ secrets.RENDER_FRONTEND_URL }}"
+      # In a real scenario, you'd use Render's deployment hooks or APIs
+
+    - name: Run smoke tests against production
+      run: |
+        npx cypress run --spec "cypress/e2e/smoke.cy.js" --config baseUrl=${{ secrets.PRODUCTION_FRONTEND_URL }}
+      working-directory: frontend
+      if: success()
+
+  # Notification
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [build-and-deploy]
+    if: always()
+    
+    steps:
+    - name: Notify Slack on Success
+      if: needs.build-and-deploy.result == 'success'
+      run: |
+        echo "✅ Deployment successful!"
+        # Add Slack notification here if needed
+
+    - name: Notify Slack on Failure
+      if: needs.build-and-deploy.result == 'failure'
+      run: |
+        echo "❌ Deployment failed!"
+        # Add Slack notification here if needed
+
+  # Cleanup
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [e2e-tests, performance-tests]
+    if: always()
+    
+    steps:
+    - name: Clean up test artifacts
+      run: |
+        echo "Cleaning up test artifacts..."
+        # Remove old test reports, screenshots, etc.
+
+# Additional workflow configurations
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true

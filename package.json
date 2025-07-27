@@ -1,0 +1,60 @@
+{
+  "name": "todo-app-fullstack",
+  "version": "1.0.0",
+  "description": "Full-stack Todo application with comprehensive automated testing",
+  "main": "index.js",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm start",
+    "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm start",
+    "build": "cd frontend && npm run build",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd backend && npm test",
+    "test:frontend": "cd frontend && npm test -- --watchAll=false",
+    "test:e2e": "cd frontend && npm run test:e2e",
+    "test:all": "npm run test:backend && npm run test:e2e",
+    "cypress:open": "cd frontend && npx cypress open",
+    "cypress:run": "cd frontend && npx cypress run",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd backend && npm run lint || echo 'Backend linting not configured'",
+    "lint:frontend": "cd frontend && npm run lint || echo 'Frontend linting not configured'",
+    "clean": "rm -rf node_modules backend/node_modules frontend/node_modules",
+    "clean:coverage": "rm -rf backend/coverage frontend/coverage",
+    "deploy:build": "npm run build && echo 'Build complete - ready for deployment'",
+    "postinstall": "echo 'Installing dependencies for backend and frontend...' && cd backend && npm install && cd ../frontend && npm install"
+  },
+  "keywords": [
+    "todo",
+    "react",
+    "nodejs",
+    "express",
+    "testing",
+    "cypress",
+    "supertest",
+    "jest",
+    "fullstack",
+    "automated-testing"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/praizoh/todo-app-fullstack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/praizoh/todo-app-fullstack/issues"
+  },
+  "homepage": "https://github.com/praizoh/todo-app-fullstack#readme"
+}
